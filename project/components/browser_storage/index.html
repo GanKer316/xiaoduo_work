@@ -1,0 +1,88 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+const loadedValues = new Map();
+const completedActions = new Set();
+
+function sendValue(value) {
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setComponentValue",
+    value,
+  }, "*");
+}
+
+function setHeight() {
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setFrameHeight",
+    height: 0,
+  }, "*");
+}
+
+function actionToken(action, storageKey, payload) {
+  return `${action}:${storageKey}:${JSON.stringify(payload || {})}`;
+}
+
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "streamlit:render") return;
+
+  const args = data.args || {};
+  const action = args.action;
+  const storageKey = args.storage_key;
+  const payload = args.payload || {};
+  if (!action || !storageKey) return;
+
+  if (action === "load") {
+    const loadSession = String(payload.session_id || "default");
+    const loadToken = `${storageKey}:${loadSession}`;
+    const raw = window.localStorage.getItem(storageKey);
+    if (loadedValues.get(loadToken) === raw) return;
+    loadedValues.set(loadToken, raw);
+    if (!raw) {
+      sendValue({ status: "empty" });
+      setHeight();
+      return;
+    }
+    try {
+      sendValue(JSON.parse(raw));
+    } catch (error) {
+      window.localStorage.removeItem(storageKey);
+      sendValue({ status: "empty" });
+    }
+    setHeight();
+    return;
+  }
+
+  const token = actionToken(action, storageKey, payload);
+  if (completedActions.has(token)) return;
+  completedActions.add(token);
+
+  if (action === "save") {
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+    for (const token of loadedValues.keys()) {
+      if (token.startsWith(`${storageKey}:`)) loadedValues.delete(token);
+    }
+    sendValue({ status: "saved" });
+  } else if (action === "clear") {
+    window.localStorage.removeItem(storageKey);
+    for (const token of loadedValues.keys()) {
+      if (token.startsWith(`${storageKey}:`)) loadedValues.delete(token);
+    }
+    sendValue({ status: "cleared" });
+  }
+  setHeight();
+});
+
+window.parent.postMessage({
+  isStreamlitMessage: true,
+  type: "streamlit:componentReady",
+  apiVersion: 1,
+}, "*");
+setHeight();
+</script>
+</body>
+</html>
